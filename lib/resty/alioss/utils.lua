@@ -8,8 +8,11 @@ local ERR           = ngx.ERR
 local WARN          = ngx.WARN
 local DEBUG         = ngx.DEBUG
 local ngx_time      = ngx.time
+local ngx_re_find   = ngx.re.find
 local ngx_http_time = ngx.http_time
 local ngx_hmac_sha1 = ngx.hmac_sha1
+local ngx_encode_base64 = ngx.encode_base64
+local ngx_escape_uri = ngx.escape_uri
 
 
 local need_sign = {
@@ -56,23 +59,27 @@ local need_sign = {
 
 
 -- req: request for `lua-resty-http`
--- opts: table contains `access_key`, `secret_key`, `security_token`(optional), `endpoint`
 -- res: resource table contains `bucket_name`, `object_name`
-local function get_header_signature(req, opts, res)
-    if not (opts and opts.access_key and opts.secret_key) then
-        return nil, "argument opts should contain access_key and secret_key"
+-- secret_key: access key secret
+-- security_token: optional when use STS
+local function get_header_signature(req, res, secret_key, security_token)
+    if not secret_key then
+        return nil, "secret_key required"
     end
+
+    local resource = res or {}
 
     local ossheaders = {}
     local subresources = {}
-    local c1 = 1, c2 = 1
+    local c1, c2 = 1, 1
+    local headers = req.headers or {}
     for k, v in pairs(headers) do
-        local from, to ,err = ngx_re.find(k, "^x-oss-", "jo", "i")
+        local from, to ,err = ngx_re_find(k, "^x-oss-", "jo", "i")
         if from then
             ossheaders[c1] = str_lower(k) .. ":" .. v
             c1 = c1 + 1
         elseif need_sign[k] then
-            subresources[c2] = k .. "=" .. v
+            subresources[c2] = k .. "=" .. ngx_escape_uri(v)
             c2 = c2 + 1
         end
     end
@@ -91,29 +98,29 @@ local function get_header_signature(req, opts, res)
 
     local c_ossheaders = ""
     if #ossheaders > 1 then
-        if opts.security_token then
-            ossheaders[count] = "x-oss-security-token:" .. opts.security_token
+        if security_token then
+            ossheaders[count] = "x-oss-security-token:" .. security_token
         end
         tab_sort(ossheaders)
         c_ossheaders = tab_concat(ossheaders, "\n")
     else
-        if opts.security_token then
-            c_ossheaders = "x-oss-security-token:" .. opts.security_token
+        if security_token then
+            c_ossheaders = "x-oss-security-token:" .. security_token
         end
     end
 
     local c_resoure
-    if res.bucket_name then
-        if res.object_name then
-            c_resoure = str_format("/%s/%s/", res.bucket_name, res.object_name)
+    if resource.bucket_name then
+        if resource.object_name then
+            c_resoure = str_format("/%s/%s/", resource.bucket_name, resource.object_name)
         else
-            c_resoure = str_format("/%s/", res.bucket_name)
+            c_resoure = str_format("/%s/", resource.bucket_name)
         end
     else
         c_resoure = "/"
     end
     
-    if #subresources > 1 then
+    if c2 > 1 then
         tab_sort(subresources)
         local query = tab_concat(subresources, "&")
         c_resoure = c_resoure .. "?" .. query
@@ -127,11 +134,25 @@ local function get_header_signature(req, opts, res)
     }
     if c_ossheaders ~= "" then
         tosign[5] = c_ossheaders
+        tosign[6] = c_resoure
+    else
+        tosign[5] = c_resoure
     end
-    tosign[6] = c_resoure
 
     local strtosign = tab_concat(tosign, "\n")
 
-    local digest = ngx_hmac_sha1(opts.secret_key, strtosign)
+    log(DEBUG, "string to sign: ", strtosign)
+
+    local digest, err = ngx_hmac_sha1(secret_key, strtosign)
+    if not digest then
+        return nil, err
+    end
+
     return ngx_encode_base64(digest)
 end
+
+local _M = {
+    get_header_signature = get_header_signature,
+}
+
+return _M

@@ -15,6 +15,7 @@ description = {
 }
 dependencies = {
    "lua-resty-http = 0.15-0",
+   "xml2lua = 1.3-2",
 }
 build = {
     type = "make",

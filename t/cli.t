@@ -5,8 +5,11 @@ plan tests => repeat_each() * (blocks() * 4) + 1;
 
 my $pwd = cwd();
 
-$ENV{TEST_NGINX_RESOLVER} = '223.5.5.5';
 $ENV{TEST_COVERAGE} ||= 0;
+$ENV{TEST_NGINX_RESOLVER}            ||= '223.5.5.5';
+$ENV{TEST_NGINX_ALICLOUD_ACCESS_KEY} ||= '123';
+$ENV{TEST_NGINX_ALICLOUD_SECRET_KEY} ||= '123';
+$ENV{TEST_NGINX_ALICLOUD_ENDPOINT}   ||= 'oss-cn-hangzhou.aliyuncs.com';
 
 our $HttpConfig = qq{
     lua_package_path "$pwd/lib/?.lua;$pwd/deps/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?.lua;;";
@@ -26,37 +29,34 @@ no_long_string();
 run_tests();
 
 __DATA__
-=== TEST 1: Simple default get.
+=== TEST 1: List buckets.
 --- http_config eval: $::HttpConfig
 --- config
     location = /a {
+        resolver $TEST_NGINX_RESOLVER;
         content_by_lua '
             local alioss = require "resty.alioss"
+	    local cjson = require "cjson"
             local oss_cli = alioss.new({
-                access_key = "123",
-                secret_key = "456",
-                endpoint = "oss-cn-hangzhou.aliyuncs.com",
+                access_key = "$TEST_NGINX_ALICLOUD_ACCESS_KEY",
+                secret_key = "$TEST_NGINX_ALICLOUD_SECRET_KEY",
+                endpoint   = "$TEST_NGINX_ALICLOUD_ENDPOINT",
             })
-            httpc:connect("127.0.0.1", ngx.var.server_port)
-            local res, err = httpc:request{
-                path = "/b"
-            }
-            ngx.status = res.status
-            ngx.print(res:read_body())
-            httpc:close()
+	    local c, err = oss_cli:list_buckets()
+	    if not c then
+	        ngx.say("failed to list_buckets: ", err)
+	    end
+
+	    ngx.say(cjson.encode(c))
         ';
-    }
-    location = /b {
-        echo "OK";
     }
 --- request
 GET /a
---- response_body
-OK
+--- response_body_like
+^\{"Owner.*\}$
 --- no_error_log
 [error]
 [warn]
 
-__DATA__
 
-=== TEST 1: 
+__DATA__
