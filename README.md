@@ -1,6 +1,6 @@
 Name
 ====
-lua-resty-alioss - OpenResty client for Alibaba Cloud OSS.
+lua-resty-alioss - OpenResty lua client for Alibaba Cloud OSS.
 
 Status
 ======
